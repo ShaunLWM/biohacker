@@ -21,7 +21,10 @@ esac
 
 LATEST_VERSION="$(basename "$(curl -fsSLI -o /dev/null -w '%{url_effective}' "${RELEASE_URL}/latest")")"
 CI_VERSION="${LATEST_VERSION%.*}"
-KERNEL_LIST_URL="https://spec.ccfc.min.s3.amazonaws.com/?prefix=firecracker-ci/${CI_VERSION}/${FIRECRACKER_ARCH}/vmlinux-&list-type=2"
+# Firecracker's own docs use plain HTTP for the S3 bucket listing endpoint.
+# The HTTPS hostname often fails certificate validation on this bucket alias,
+# while the actual kernel object download works over HTTPS via s3.amazonaws.com.
+KERNEL_LIST_URL="http://spec.ccfc.min.s3.amazonaws.com/?prefix=firecracker-ci/${CI_VERSION}/${FIRECRACKER_ARCH}/vmlinux-&list-type=2"
 
 echo "Resolving Firecracker CI kernel for ${CI_VERSION} (${FIRECRACKER_ARCH})"
 
