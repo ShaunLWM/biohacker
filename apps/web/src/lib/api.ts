@@ -13,12 +13,15 @@ async function request<T>(
 	init: RequestInit,
 	parse: (value: unknown) => T,
 ) {
+	const headers = new Headers(init.headers);
+
+	if (init.body !== undefined && !headers.has("content-type")) {
+		headers.set("content-type", "application/json");
+	}
+
 	const response = await fetch(`/api/control${input}`, {
 		...init,
-		headers: {
-			"content-type": "application/json",
-			...(init.headers ?? {}),
-		},
+		headers,
 	});
 
 	const body = await response.json().catch(() => null);
