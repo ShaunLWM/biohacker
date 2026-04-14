@@ -353,6 +353,12 @@ export class FirecrackerRunner implements VmRunner {
 
 	private async createSeedImage(runtime: FirecrackerRuntime) {
 		await runCommand("cloud-localds", [
+			"--disk_format",
+			"raw",
+			"--filesystem",
+			"vfat",
+			"--dsmode",
+			"local",
 			"--network-config",
 			runtime.networkConfigPath,
 			runtime.seedImagePath,
@@ -470,7 +476,7 @@ export class FirecrackerRunner implements VmRunner {
 		await putBootSource(runtime.apiSocketPath, {
 			kernel_image_path: this.config.KERNEL_IMAGE_PATH,
 			boot_args:
-				"console=ttyS0 reboot=k panic=1 pci=off nomodules root=/dev/vda rw",
+				"console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw",
 		});
 		await putDrive(runtime.apiSocketPath, "rootfs", {
 			path_on_host: runtime.writableRootfsPath,
