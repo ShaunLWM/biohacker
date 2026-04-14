@@ -17,6 +17,7 @@ apt-get install -y \
   iproute2 \
   iptables \
   jq \
+  mtools \
   nftables \
   openssh-client \
   qemu-utils \

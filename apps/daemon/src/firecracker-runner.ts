@@ -116,12 +116,9 @@ export class FirecrackerRunner implements VmRunner {
 			);
 			const publicKey = (await readFile(runtime.sshPublicKeyPath, "utf8")).trim();
 
-			step = "write-cloud-init";
+			step = "customize-rootfs";
 			this.logger.info({ id: reservation.id, step }, "VM create step");
-			await this.writeCloudInitFiles(runtime, publicKey);
-			step = "create-seed-image";
-			this.logger.info({ id: reservation.id, step }, "VM create step");
-			await this.createSeedImage(runtime);
+			await this.customizeRootfs(runtime, publicKey);
 			step = "configure-tap";
 			this.logger.info({ id: reservation.id, step }, "VM create step");
 			await this.configureTap(runtime);
@@ -295,76 +292,77 @@ export class FirecrackerRunner implements VmRunner {
 		await runCommand("chmod", ["0644", publicKeyPath]);
 	}
 
-	private async writeCloudInitFiles(
+	private async customizeRootfs(
 		runtime: FirecrackerRuntime,
 		publicKey: string,
 	) {
 		const hostname = `biohacker-${basename(runtime.instanceDir)}`;
+		const mountDir = join(runtime.instanceDir, "rootfs-mount");
+
+		await ensureDir(mountDir);
+
+		try {
+			await runCommand("mount", ["-o", "loop", runtime.writableRootfsPath, mountDir]);
+			await this.writeRootfsConfig(mountDir, runtime, hostname, publicKey);
+		} finally {
+			await runCommand("umount", [mountDir], { allowFailure: true });
+			await removePath(mountDir);
+		}
+	}
+
+	private async writeRootfsConfig(
+		mountDir: string,
+		runtime: FirecrackerRuntime,
+		hostname: string,
+		publicKey: string,
+	) {
+		const ubuntuHome = join(mountDir, "home", "ubuntu");
+		const sshDir = join(ubuntuHome, ".ssh");
+		const sshDirOwner = await this.readOwner(ubuntuHome);
+
+		await ensureDir(sshDir);
+		await writeTextFile(join(sshDir, "authorized_keys"), `${publicKey}\n`);
+		await runCommand("chmod", ["0700", sshDir]);
+		await runCommand("chmod", ["0600", join(sshDir, "authorized_keys")]);
+		await runCommand("chown", ["-R", sshDirOwner, sshDir]);
+
+		await writeTextFile(join(mountDir, "etc", "hostname"), `${hostname}\n`);
 		await writeTextFile(
-			runtime.userDataPath,
+			join(mountDir, "etc", "hosts"),
 			[
-				"#cloud-config",
-				`hostname: ${hostname}`,
-				"manage_etc_hosts: true",
-				"users:",
-				"  - default",
-				"  - name: ubuntu",
-				"    sudo: ALL=(ALL) NOPASSWD:ALL",
-				"    shell: /bin/bash",
-				"    ssh_authorized_keys:",
-				`      - ${publicKey}`,
-				"ssh_pwauth: false",
-				"disable_root: true",
-				"preserve_hostname: false",
-				"growpart:",
-				"  mode: auto",
-				"  devices: ['/']",
-				"resize_rootfs: true",
+				"127.0.0.1 localhost",
+				"127.0.1.1 " + hostname,
+				"::1 localhost ip6-localhost ip6-loopback",
+				"ff02::1 ip6-allnodes",
+				"ff02::2 ip6-allrouters",
 				"",
 			].join("\n"),
 		);
+		await ensureDir(join(mountDir, "etc", "systemd", "network"));
 		await writeTextFile(
-			runtime.metaDataPath,
+			join(mountDir, "etc", "systemd", "network", "25-biohacker.network"),
 			[
-				`instance-id: ${basename(runtime.instanceDir)}`,
-				`local-hostname: ${hostname}`,
+				"[Match]",
+				`MACAddress=${runtime.guestMac}`,
+				"",
+				"[Network]",
+				`Address=${runtime.guestIp}/30`,
+				`Gateway=${runtime.hostTapIp}`,
+				...DEFAULT_NAMESERVERS.map((item) => `DNS=${item}`),
+				"LinkLocalAddressing=ipv6",
 				"",
 			].join("\n"),
 		);
+		await ensureDir(join(mountDir, "etc", "cloud", "cloud.cfg.d"));
 		await writeTextFile(
-			runtime.networkConfigPath,
-			[
-				"version: 2",
-				"ethernets:",
-				"  eth0:",
-				"    match:",
-				`      macaddress: "${runtime.guestMac}"`,
-				"    set-name: eth0",
-				`    addresses: ["${runtime.guestIp}/30"]`,
-				"    routes:",
-				`      - to: default`,
-				`        via: ${runtime.hostTapIp}`,
-				"    nameservers:",
-				`      addresses: [${DEFAULT_NAMESERVERS.map((item) => `"${item}"`).join(", ")}]`,
-				"",
-			].join("\n"),
+			join(mountDir, "etc", "cloud", "cloud.cfg.d", "99-biohacker-disable-network-config.cfg"),
+			"network: {config: disabled}\n",
 		);
 	}
 
-	private async createSeedImage(runtime: FirecrackerRuntime) {
-		await runCommand("cloud-localds", [
-			"--disk_format",
-			"raw",
-			"--filesystem",
-			"vfat",
-			"--dsmode",
-			"local",
-			"--network-config",
-			runtime.networkConfigPath,
-			runtime.seedImagePath,
-			runtime.userDataPath,
-			runtime.metaDataPath,
-		]);
+	private async readOwner(path: string) {
+		const result = await runCommand("stat", ["-c", "%u:%g", path]);
+		return result.stdout.trim();
 	}
 
 	private async configureTap(runtime: FirecrackerRuntime) {
@@ -482,11 +480,6 @@ export class FirecrackerRunner implements VmRunner {
 			path_on_host: runtime.writableRootfsPath,
 			is_root_device: true,
 			is_read_only: false,
-		});
-		await putDrive(runtime.apiSocketPath, "seed", {
-			path_on_host: runtime.seedImagePath,
-			is_root_device: false,
-			is_read_only: true,
 		});
 		await putNetworkInterface(runtime.apiSocketPath, "eth0", {
 			host_dev_name: runtime.tapName,
