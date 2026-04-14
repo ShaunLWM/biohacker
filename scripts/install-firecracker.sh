@@ -52,10 +52,12 @@ curl -fL "$ASSET_URL" -o "$TMP_DIR/firecracker.tgz"
 mkdir -p "$TMP_DIR/extract"
 tar -xzf "$TMP_DIR/firecracker.tgz" -C "$TMP_DIR/extract"
 
-FIRECRACKER_BIN_PATH="$(find "$TMP_DIR/extract" -type f -name firecracker | head -n 1)"
-JAILER_BIN_PATH="$(find "$TMP_DIR/extract" -type f -name jailer | head -n 1)"
+FIRECRACKER_BIN_PATH="$(find "$TMP_DIR/extract" -type f \( -name 'firecracker' -o -name 'firecracker-*' \) | head -n 1)"
+JAILER_BIN_PATH="$(find "$TMP_DIR/extract" -type f \( -name 'jailer' -o -name 'jailer-*' \) | head -n 1)"
 
 if [[ -z "$FIRECRACKER_BIN_PATH" || -z "$JAILER_BIN_PATH" ]]; then
+  echo "Archive contents were:" >&2
+  find "$TMP_DIR/extract" -maxdepth 3 -type f | sed "s|$TMP_DIR/extract/||" >&2
   echo "Failed to locate firecracker and jailer binaries in the downloaded archive" >&2
   exit 1
 fi
