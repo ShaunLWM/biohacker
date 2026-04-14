@@ -91,6 +91,7 @@ export class FirecrackerRunner implements VmRunner {
 		const network = this.allocateNetwork(reservation.sshPort);
 		const instanceDir = join(this.config.INSTANCE_BASE_DIR, reservation.id);
 		const runtime = this.createRuntimePaths(instanceDir, reservation, network);
+		let step = "create-instance-dir";
 
 		await ensureDir(instanceDir);
 		this.logger.info(
@@ -104,23 +105,46 @@ export class FirecrackerRunner implements VmRunner {
 		);
 
 		try {
+			step = "clone-base-image";
+			this.logger.info({ id: reservation.id, step }, "VM create step");
 			await this.cloneBaseImage(runtime.writableRootfsPath);
+			step = "generate-ssh-keypair";
+			this.logger.info({ id: reservation.id, step }, "VM create step");
 			await this.generateSshKeypair(
 				runtime.sshPrivateKeyPath,
 				runtime.sshPublicKeyPath,
 			);
 			const publicKey = (await readFile(runtime.sshPublicKeyPath, "utf8")).trim();
 
+			step = "write-cloud-init";
+			this.logger.info({ id: reservation.id, step }, "VM create step");
 			await this.writeCloudInitFiles(runtime, publicKey);
+			step = "create-seed-image";
+			this.logger.info({ id: reservation.id, step }, "VM create step");
 			await this.createSeedImage(runtime);
+			step = "configure-tap";
+			this.logger.info({ id: reservation.id, step }, "VM create step");
 			await this.configureTap(runtime);
+			step = "configure-iptables";
+			this.logger.info({ id: reservation.id, step }, "VM create step");
 			await this.configureIptables(runtime, reservation.sshPort);
 
+			step = "launch-firecracker";
+			this.logger.info({ id: reservation.id, step }, "VM create step");
 			const pid = await this.launchFirecracker(runtime);
 			runtime.firecrackerPid = pid;
+			step = "persist-runtime";
+			this.logger.info({ id: reservation.id, step, pid }, "VM create step");
 			await this.persistRuntime(runtime);
 
+			step = "configure-microvm";
+			this.logger.info({ id: reservation.id, step }, "VM create step");
 			await this.configureMicroVm(runtime);
+			step = "wait-for-ssh";
+			this.logger.info(
+				{ id: reservation.id, step, guestIp: runtime.guestIp },
+				"VM create step",
+			);
 			await this.waitForSsh(runtime.guestIp, 22);
 			this.logger.info(
 				{
@@ -144,8 +168,12 @@ export class FirecrackerRunner implements VmRunner {
 					lastReason: null,
 				},
 				runtime,
-			};
+				};
 		} catch (error) {
+			this.logger.error(
+				{ err: error, id: reservation.id, step },
+				"VM create step failed",
+			);
 			await this.cleanupRuntime(runtime);
 			throw error;
 		}
@@ -421,7 +449,7 @@ export class FirecrackerRunner implements VmRunner {
 		await putMachineConfig(runtime.apiSocketPath, {
 			vcpu_count: this.config.VM_VCPU_COUNT,
 			mem_size_mib: this.config.VM_MEMORY_MIB,
-			ht_enabled: false,
+			smt: false,
 		});
 		await putBootSource(runtime.apiSocketPath, {
 			kernel_image_path: this.config.KERNEL_IMAGE_PATH,

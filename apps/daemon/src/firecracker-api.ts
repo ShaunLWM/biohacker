@@ -50,7 +50,7 @@ export async function putMachineConfig(
 	config: {
 		vcpu_count: number;
 		mem_size_mib: number;
-		ht_enabled?: boolean;
+		smt?: boolean;
 	},
 ) {
 	await firecrackerRequest(socketPath, "/machine-config", config);
