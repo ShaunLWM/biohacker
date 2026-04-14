@@ -1,0 +1,20 @@
+[Unit]
+Description=Biohacker Firecracker daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=biohacker
+Group=biohacker
+WorkingDirectory=/opt/biohacker/app
+EnvironmentFile=-/etc/biohacker/daemon.env
+ExecStart=/usr/bin/env node /opt/biohacker/app/apps/daemon/dist/index.js
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

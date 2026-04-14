@@ -1,0 +1,20 @@
+{
+  "name": "biohacker",
+  "private": true,
+  "packageManager": "pnpm@10.12.4",
+  "scripts": {
+    "dev:web": "pnpm --dir apps/web dev",
+    "dev:daemon": "pnpm --dir apps/daemon dev",
+    "build": "pnpm -r build",
+    "check": "pnpm -r check",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "lightningcss"
+    ]
+  }
+}

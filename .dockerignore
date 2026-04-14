@@ -1,0 +1,13 @@
+.git
+.gitignore
+node_modules
+apps/web/node_modules
+apps/daemon/node_modules
+packages/shared/node_modules
+apps/web/.output
+apps/web/.nitro
+dist
+coverage
+data
+docs
+.superpowers

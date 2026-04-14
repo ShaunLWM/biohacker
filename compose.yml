@@ -1,0 +1,38 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-biohacker}
+      POSTGRES_USER: ${POSTGRES_USER:-biohacker}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-biohacker}
+      PGDATA: /var/lib/postgresql/18/docker
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${POSTGRES_USER:-biohacker} -d ${POSTGRES_DB:-biohacker}
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - ./data/postgres:/var/lib/postgresql
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-change-me}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://biohacker:biohacker@postgres:5432/biohacker}
+      DAEMON_INTERNAL_URL: ${DAEMON_INTERNAL_URL:-http://host.docker.internal:4000}
+    ports:
+      - ${WEB_PORT:-3000}:3000
