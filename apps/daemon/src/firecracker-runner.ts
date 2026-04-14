@@ -316,15 +316,21 @@ export class FirecrackerRunner implements VmRunner {
 		hostname: string,
 		publicKey: string,
 	) {
-		const ubuntuHome = join(mountDir, "home", "ubuntu");
+		const ubuntuAccount = await this.readGuestAccount(mountDir, "ubuntu");
+		const ubuntuHome = join(
+			mountDir,
+			ubuntuAccount.home.replace(/^\/+/, ""),
+		);
 		const sshDir = join(ubuntuHome, ".ssh");
-		const sshDirOwner = await this.readOwner(ubuntuHome);
+		const accountOwner = `${ubuntuAccount.uid}:${ubuntuAccount.gid}`;
 
+		await ensureDir(ubuntuHome);
+		await runCommand("chown", [accountOwner, ubuntuHome]);
 		await ensureDir(sshDir);
 		await writeTextFile(join(sshDir, "authorized_keys"), `${publicKey}\n`);
 		await runCommand("chmod", ["0700", sshDir]);
 		await runCommand("chmod", ["0600", join(sshDir, "authorized_keys")]);
-		await runCommand("chown", ["-R", sshDirOwner, sshDir]);
+		await runCommand("chown", ["-R", accountOwner, sshDir]);
 
 		await writeTextFile(join(mountDir, "etc", "hostname"), `${hostname}\n`);
 		await writeTextFile(
@@ -360,9 +366,32 @@ export class FirecrackerRunner implements VmRunner {
 		);
 	}
 
-	private async readOwner(path: string) {
-		const result = await runCommand("stat", ["-c", "%u:%g", path]);
-		return result.stdout.trim();
+	private async readGuestAccount(mountDir: string, username: string) {
+		const passwdPath = join(mountDir, "etc", "passwd");
+		const passwdContents = await readFile(passwdPath, "utf8");
+		const accountLine = passwdContents
+			.split("\n")
+			.find((line) => line.startsWith(`${username}:`));
+
+		if (!accountLine) {
+			throw new Error(`User ${username} not found in guest passwd file`);
+		}
+
+		const parts = accountLine.split(":");
+
+		if (parts.length < 7) {
+			throw new Error(`Guest passwd entry for ${username} is malformed`);
+		}
+
+		const uid = Number(parts[2]);
+		const gid = Number(parts[3]);
+		const home = parts[5];
+
+		if (!Number.isInteger(uid) || !Number.isInteger(gid) || home.length === 0) {
+			throw new Error(`Guest passwd entry for ${username} is incomplete`);
+		}
+
+		return { uid, gid, home };
 	}
 
 	private async configureTap(runtime: FirecrackerRuntime) {
