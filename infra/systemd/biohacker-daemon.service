@@ -5,8 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=biohacker
-Group=biohacker
+User=root
+Group=root
 WorkingDirectory=/opt/biohacker/app
 EnvironmentFile=-/etc/biohacker/daemon.env
 ExecStart=/usr/bin/env node /opt/biohacker/app/apps/daemon/dist/index.js

@@ -8,21 +8,55 @@ import {
 import Fastify from "fastify";
 
 import { exists, loadConfig } from "./config.js";
+import { FirecrackerRunner } from "./firecracker-runner.js";
+import { MockRunner } from "./mock-runner.js";
+import type { ManagedVm } from "./types.js";
 import { VmRegistry } from "./vm-registry.js";
 
 const config = loadConfig();
 const app = Fastify({ logger: true });
 const registry = new VmRegistry(config);
+const shuttingDown = new Set<string>();
+const runner =
+  config.RUNNER_MODE === "firecracker"
+    ? new FirecrackerRunner(config, app.log)
+    : new MockRunner(config.HOST_PUBLIC_IP);
+
+await runner.reconcile();
+
+async function shutdownVm(instance: ManagedVm, reason: "user" | "expired") {
+  if (shuttingDown.has(instance.record.id)) {
+    return false;
+  }
+
+  shuttingDown.add(instance.record.id);
+
+  try {
+    await runner.shutdown(instance, reason);
+    registry.remove(instance.record.id);
+    return true;
+  } finally {
+    shuttingDown.delete(instance.record.id);
+  }
+}
 
 const ttlSweepHandle = setInterval(() => {
-  const expired = registry.collectExpired();
+  const expired = registry
+    .expired()
+    .filter((item) => !shuttingDown.has(item.record.id));
 
-  if (expired.length > 0) {
-    app.log.info(
-      { ids: expired.map((item) => item.id) },
-      "Expired VMs removed by TTL sweeper",
-    );
-  }
+  void Promise.all(
+    expired.map(async (item) => {
+      try {
+        await shutdownVm(item, "expired");
+      } catch (error) {
+        app.log.error(
+          { err: error, id: item.record.id },
+          "Failed to clean up an expired VM",
+        );
+      }
+    }),
+  );
 }, 10_000);
 
 ttlSweepHandle.unref();
@@ -62,25 +96,49 @@ app.post("/v1/vms", async (_, reply): Promise<VmRecord> => {
     });
   }
 
-  if (config.RUNNER_MODE !== "mock") {
-    return reply.code(501).send({
+  const reservation = registry.createReservation();
+
+  try {
+    const instance = await runner.create(reservation);
+    registry.add(instance);
+    return instance.record;
+  } catch (error) {
+    registry.releaseReservation(reservation.id);
+    app.log.error({ err: error }, "Failed to create VM");
+    return reply.code(500).send({
       message:
-        "Firecracker runner wiring is not implemented yet. Use RUNNER_MODE=mock for UI development.",
+        error instanceof Error ? error.message : "Failed to create Firecracker VM",
     });
   }
-
-  return registry.create();
 });
 
 app.post("/v1/vms/:id/shutdown", async (request, reply) => {
   const params = request.params as { id: string };
-  const vm = registry.shutdown(params.id, "user");
+  const vm = registry.get(params.id);
 
   if (!vm) {
     return reply.code(404).send({ message: "VM not found" });
   }
 
-  return vm;
+  if (shuttingDown.has(vm.record.id)) {
+    return reply.code(409).send({ message: "VM is already shutting down" });
+  }
+
+  try {
+    await shutdownVm(vm, "user");
+
+    return {
+      ...vm.record,
+      state: "deleted",
+      lastReason: "user",
+    };
+  } catch (error) {
+    app.log.error({ err: error, id: params.id }, "Failed to shut down VM");
+    return reply.code(500).send({
+      message:
+        error instanceof Error ? error.message : "Failed to shut down VM",
+    });
+  }
 });
 
 const close = async () => {

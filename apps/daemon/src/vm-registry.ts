@@ -1,93 +1,87 @@
 import { randomUUID } from "node:crypto";
 
-import type { VmRecord, VmTerminationReason } from "@biohacker/shared";
-
 import type { DaemonConfig } from "./config.js";
-
-const SSH_PRIVATE_KEY_PLACEHOLDER = `-----BEGIN OPENSSH PRIVATE KEY-----
-mock-runner-placeholder
------END OPENSSH PRIVATE KEY-----`;
+import type { ManagedVm, VmReservation } from "./types.js";
 
 export class VmRegistry {
-	readonly #items = new Map<string, VmRecord>();
+	readonly #items = new Map<string, ManagedVm>();
+	readonly #pending = new Map<string, VmReservation>();
 	#nextPort: number;
 
 	constructor(private readonly config: DaemonConfig) {
 		this.#nextPort = config.SSH_PORT_RANGE_START;
 	}
 
-	list() {
-		return Array.from(this.#items.values()).sort((a, b) =>
-			a.createdAt.localeCompare(b.createdAt),
-		);
-	}
-
 	count() {
-		return this.#items.size;
+		return this.#items.size + this.#pending.size;
 	}
 
-	create() {
+	list() {
+		return Array.from(this.#items.values())
+			.map((item) => item.record)
+			.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+	}
+
+	get(id: string) {
+		return this.#items.get(id) ?? null;
+	}
+
+	createReservation(): VmReservation {
 		const now = new Date();
-		const expiresAt = new Date(
-			now.getTime() + this.config.VM_TTL_MINUTES * 60 * 1000,
-		);
-		const item: VmRecord = {
+		const reservation: VmReservation = {
 			id: randomUUID(),
-			state: "running",
-			host: this.config.HOST_PUBLIC_IP,
 			sshPort: this.#allocatePort(),
-			username: "ubuntu",
-			privateKey: SSH_PRIVATE_KEY_PLACEHOLDER,
 			createdAt: now.toISOString(),
-			expiresAt: expiresAt.toISOString(),
-			lastReason: null,
+			expiresAt: new Date(
+				now.getTime() + this.config.VM_TTL_MINUTES * 60 * 1000,
+			).toISOString(),
 		};
 
-		this.#items.set(item.id, item);
-		return item;
+		this.#pending.set(reservation.id, reservation);
+
+		return reservation;
 	}
 
-	shutdown(id: string, reason: VmTerminationReason) {
-		const current = this.#items.get(id);
+	add(instance: ManagedVm) {
+		this.#pending.delete(instance.record.id);
+		this.#items.set(instance.record.id, instance);
+	}
 
-		if (!current) {
-			return null;
-		}
-
-		const updated: VmRecord = {
-			...current,
-			state: "deleted",
-			lastReason: reason,
-		};
-
+	remove(id: string) {
+		const current = this.#items.get(id) ?? null;
 		this.#items.delete(id);
-
-		return updated;
+		return current;
 	}
 
-	collectExpired(now = new Date()) {
-		const expired = this.list().filter(
-			(item) => new Date(item.expiresAt).getTime() <= now.getTime(),
+	releaseReservation(id: string) {
+		this.#pending.delete(id);
+	}
+
+	expired(now = new Date()) {
+		return Array.from(this.#items.values()).filter(
+			(item) => new Date(item.record.expiresAt).getTime() <= now.getTime(),
 		);
-
-		for (const item of expired) {
-			this.shutdown(item.id, "expired");
-		}
-
-		return expired;
 	}
 
 	#allocatePort() {
 		const start = this.config.SSH_PORT_RANGE_START;
 		const end = this.config.SSH_PORT_RANGE_END;
 		const span = end - start + 1;
+		const reservedPorts = new Set<number>();
+
+		for (const item of this.#items.values()) {
+			reservedPorts.add(item.record.sshPort);
+		}
+
+		for (const reservation of this.#pending.values()) {
+			reservedPorts.add(reservation.sshPort);
+		}
 
 		for (let index = 0; index < span; index += 1) {
 			const candidate = this.#nextPort + index;
 			const port = candidate > end ? start + (candidate - end - 1) : candidate;
-			const inUse = this.list().some((item) => item.sshPort === port);
 
-			if (!inUse) {
+			if (!reservedPorts.has(port)) {
 				this.#nextPort = port === end ? start : port + 1;
 				return port;
 			}

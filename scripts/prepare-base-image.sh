@@ -20,19 +20,29 @@ case "$ARCH" in
     ;;
 esac
 
-QCOW_PATH="$OUTPUT_DIR/ubuntu-24.04-${UBUNTU_ARCH}.img"
 RAW_PATH="$OUTPUT_DIR/$RAW_NAME"
-IMAGE_URL="$UBUNTU_RELEASE_BASE/ubuntu-24.04-server-cloudimg-${UBUNTU_ARCH}.img"
+ROOTFS_URL="$UBUNTU_RELEASE_BASE/ubuntu-24.04-server-cloudimg-${UBUNTU_ARCH}-root.tar.xz"
+TMP_DIR="$(mktemp -d)"
+
+cleanup() {
+  rm -rf "$TMP_DIR"
+}
+
+trap cleanup EXIT
 
 install -d "$OUTPUT_DIR"
 
-echo "Downloading Ubuntu 24.04 cloud image from $IMAGE_URL"
-curl -fL "$IMAGE_URL" -o "$QCOW_PATH"
+echo "Downloading Ubuntu 24.04 root filesystem from $ROOTFS_URL"
+curl -fL "$ROOTFS_URL" -o "$TMP_DIR/rootfs.tar.xz"
 
-echo "Converting $QCOW_PATH to raw image $RAW_PATH"
-qemu-img convert -f qcow2 -O raw "$QCOW_PATH" "$RAW_PATH"
+echo "Extracting Ubuntu root filesystem"
+install -d "$TMP_DIR/rootfs"
+tar -xJf "$TMP_DIR/rootfs.tar.xz" -C "$TMP_DIR/rootfs" --numeric-owner
 
-echo "Resizing raw image to ${DISK_SIZE_GB}G"
-qemu-img resize "$RAW_PATH" "${DISK_SIZE_GB}G"
+echo "Creating ext4 rootfs image at $RAW_PATH"
+rm -f "$RAW_PATH"
+truncate -s "${DISK_SIZE_GB}G" "$RAW_PATH"
+mkfs.ext4 -F -d "$TMP_DIR/rootfs" -L rootfs "$RAW_PATH"
+tune2fs -m 0 "$RAW_PATH" >/dev/null
 
-qemu-img info "$RAW_PATH"
+ls -lh "$RAW_PATH"

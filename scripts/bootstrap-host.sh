@@ -13,11 +13,14 @@ apt-get install -y \
   ca-certificates \
   cloud-image-utils \
   curl \
+  e2fsprogs \
   iproute2 \
   iptables \
   jq \
   nftables \
-  qemu-utils
+  openssh-client \
+  qemu-utils \
+  xz-utils
 
 if ! id -u biohacker >/dev/null 2>&1; then
   useradd --system --home /var/lib/biohacker --shell /usr/sbin/nologin biohacker
@@ -49,11 +52,15 @@ systemctl daemon-reload
 cat >/etc/biohacker/daemon.env <<'EOF'
 DAEMON_HOST=0.0.0.0
 DAEMON_PORT=4000
-RUNNER_MODE=mock
+RUNNER_MODE=firecracker
 VM_TTL_MINUTES=60
 MAX_ACTIVE_VMS=10
+VM_VCPU_COUNT=2
+VM_MEMORY_MIB=2048
+SSH_BOOT_TIMEOUT_MS=120000
 HOST_PUBLIC_IP=127.0.0.1
 HOST_INTERFACE=eth0
+GUEST_NETWORK_BASE=172.29.0.0
 SSH_PORT_RANGE_START=2200
 SSH_PORT_RANGE_END=2299
 INSTANCE_BASE_DIR=/var/lib/biohacker/instances
