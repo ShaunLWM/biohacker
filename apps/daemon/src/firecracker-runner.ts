@@ -316,7 +316,7 @@ export class FirecrackerRunner implements VmRunner {
 		hostname: string,
 		publicKey: string,
 	) {
-		const ubuntuAccount = await this.readGuestAccount(mountDir, "ubuntu");
+		const ubuntuAccount = await this.ensureGuestAccount(mountDir, "ubuntu");
 		const ubuntuHome = join(
 			mountDir,
 			ubuntuAccount.home.replace(/^\/+/, ""),
@@ -366,6 +366,34 @@ export class FirecrackerRunner implements VmRunner {
 		);
 	}
 
+	private async ensureGuestAccount(mountDir: string, username: string) {
+		const existing = await this.readGuestAccount(mountDir, username);
+
+		if (existing) {
+			return existing;
+		}
+
+		await runCommand("chroot", [
+			mountDir,
+			"/usr/sbin/useradd",
+			"-m",
+			"-s",
+			"/bin/bash",
+			"-U",
+			"-G",
+			"sudo",
+			username,
+		]);
+
+		const created = await this.readGuestAccount(mountDir, username);
+
+		if (!created) {
+			throw new Error(`Failed to create guest user ${username}`);
+		}
+
+		return created;
+	}
+
 	private async readGuestAccount(mountDir: string, username: string) {
 		const passwdPath = join(mountDir, "etc", "passwd");
 		const passwdContents = await readFile(passwdPath, "utf8");
@@ -374,7 +402,7 @@ export class FirecrackerRunner implements VmRunner {
 			.find((line) => line.startsWith(`${username}:`));
 
 		if (!accountLine) {
-			throw new Error(`User ${username} not found in guest passwd file`);
+			return null;
 		}
 
 		const parts = accountLine.split(":");
