@@ -11,6 +11,10 @@ const envSchema = z.object({
 	VM_VCPU_COUNT: z.coerce.number().int().positive().default(2),
 	VM_MEMORY_MIB: z.coerce.number().int().positive().default(2048),
 	SSH_BOOT_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
+	PRESERVE_FAILED_VM_STATE: z
+		.enum(["0", "1", "false", "true"])
+		.default("false")
+		.transform((value) => value === "1" || value === "true"),
 	HOST_PUBLIC_IP: z.string().default("127.0.0.1"),
 	HOST_INTERFACE: z.string().default("eth0"),
 	GUEST_NETWORK_BASE: z.string().default("172.29.0.0"),

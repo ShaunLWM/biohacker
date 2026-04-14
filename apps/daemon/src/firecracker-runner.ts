@@ -174,7 +174,23 @@ export class FirecrackerRunner implements VmRunner {
 				{ err: error, id: reservation.id, step },
 				"VM create step failed",
 			);
-			await this.cleanupRuntime(runtime);
+
+			if (this.config.PRESERVE_FAILED_VM_STATE) {
+				this.logger.warn(
+					{
+						id: reservation.id,
+						instanceDir: runtime.instanceDir,
+						pid: runtime.firecrackerPid,
+						tapName: runtime.tapName,
+						guestIp: runtime.guestIp,
+						sshPort: runtime.sshPort,
+					},
+					"Preserving failed VM state for debugging",
+				);
+			} else {
+				await this.cleanupRuntime(runtime);
+			}
+
 			throw error;
 		}
 	}
