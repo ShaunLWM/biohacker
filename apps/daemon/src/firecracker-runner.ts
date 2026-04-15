@@ -367,7 +367,7 @@ export class FirecrackerRunner implements VmRunner {
 		);
 		const guestHome = join(mountDir, guestAccount.home.replace(/^\/+/, ""));
 		const resolvedHome = resolve(guestHome);
-		if (!resolvedHome.startsWith(resolve(mountDir) + "/")) {
+		if (!resolvedHome.startsWith(`${resolve(mountDir)}/`)) {
 			throw new Error(
 				`Guest account home path escapes mount point: ${guestAccount.home}`,
 			);
@@ -869,11 +869,10 @@ export class FirecrackerRunner implements VmRunner {
 	}
 
 	private async persistRuntime(runtime: FirecrackerRuntime) {
-		await writeFile(
-			runtime.metadataPath,
-			JSON.stringify(runtime, null, 2),
-			{ encoding: "utf8", mode: 0o600 },
-		);
+		await writeFile(runtime.metadataPath, JSON.stringify(runtime, null, 2), {
+			encoding: "utf8",
+			mode: 0o600,
+		});
 	}
 
 	private async cleanupRuntime(runtime: FirecrackerRuntime) {

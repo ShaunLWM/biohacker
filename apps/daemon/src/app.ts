@@ -9,8 +9,8 @@ import {
 import Fastify from "fastify";
 import { z } from "zod";
 import type { DaemonConfig } from "./config.js";
-import { exists } from "./fs-utils.js";
 import { FirecrackerRunner } from "./firecracker-runner.js";
+import { exists } from "./fs-utils.js";
 import { MockRunner } from "./mock-runner.js";
 import type { ManagedVm, VmRunner } from "./types.js";
 import { VmRegistry } from "./vm-registry.js";
@@ -139,7 +139,9 @@ export async function buildApp(
 	});
 
 	app.post("/v1/vms/:id/shutdown", async (request, reply) => {
-		const paramsResult = z.object({ id: z.string().uuid() }).safeParse(request.params);
+		const paramsResult = z
+			.object({ id: z.string().uuid() })
+			.safeParse(request.params);
 		if (!paramsResult.success) {
 			return reply.code(400).send({ message: "Invalid VM ID" });
 		}
@@ -155,7 +157,9 @@ export async function buildApp(
 			if (!result.ok) {
 				switch (result.reason) {
 					case "already-shutting-down":
-						return reply.code(409).send({ message: "VM is already shutting down" });
+						return reply
+							.code(409)
+							.send({ message: "VM is already shutting down" });
 				}
 			}
 
@@ -165,7 +169,10 @@ export async function buildApp(
 				lastReason: "user",
 			};
 		} catch (error) {
-			app.log.error({ err: error, id: paramsResult.data.id }, "Failed to shut down VM");
+			app.log.error(
+				{ err: error, id: paramsResult.data.id },
+				"Failed to shut down VM",
+			);
 			return reply.code(500).send({ message: "Failed to shut down VM" });
 		}
 	});

@@ -42,4 +42,3 @@ export type DaemonConfig = z.infer<typeof envSchema>;
 export function loadConfig() {
 	return envSchema.parse(process.env);
 }
-
