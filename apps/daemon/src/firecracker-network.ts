@@ -119,8 +119,9 @@ export async function configureIptables(
 	await runCommand("iptables", [
 		"-t",
 		"nat",
-		"-A",
+		"-I",
 		"PREROUTING",
+		"1",
 		"-i",
 		hostInterface,
 		"-p",
@@ -135,8 +136,9 @@ export async function configureIptables(
 	await runCommand("iptables", [
 		"-t",
 		"nat",
-		"-A",
+		"-I",
 		"OUTPUT",
+		"1",
 		"-d",
 		hostPublicIp,
 		"-p",
@@ -151,8 +153,9 @@ export async function configureIptables(
 	await runCommand("iptables", [
 		"-t",
 		"nat",
-		"-A",
+		"-I",
 		"POSTROUTING",
+		"1",
 		"-s",
 		subnetCidr,
 		"-o",
@@ -162,8 +165,9 @@ export async function configureIptables(
 	]);
 	// Allow only return traffic for established/related connections (1e)
 	await runCommand("iptables", [
-		"-A",
+		"-I",
 		"FORWARD",
+		"3",
 		"-i",
 		tapName,
 		"-o",
@@ -176,8 +180,9 @@ export async function configureIptables(
 		"ACCEPT",
 	]);
 	await runCommand("iptables", [
-		"-A",
+		"-I",
 		"FORWARD",
+		"4",
 		"-i",
 		tapName,
 		"-o",
@@ -186,8 +191,9 @@ export async function configureIptables(
 		"DROP",
 	]);
 	await runCommand("iptables", [
-		"-A",
+		"-I",
 		"FORWARD",
+		"5",
 		"-i",
 		hostInterface,
 		"-o",
