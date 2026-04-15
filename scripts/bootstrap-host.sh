@@ -7,6 +7,12 @@ if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
 fi
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+HOST_INTERFACE="$(ip route get 1.1.1.1 | awk '{for (i=1; i<=NF; i++) if ($i == "dev") { print $(i + 1); exit }}')"
+
+if [[ -z "$HOST_INTERFACE" ]]; then
+  echo "Failed to detect host interface." >&2
+  exit 1
+fi
 
 apt-get update
 apt-get install -y \
@@ -50,7 +56,7 @@ install -m 0644 \
 
 systemctl daemon-reload
 
-cat >/etc/biohacker/daemon.env <<'EOF'
+cat >/etc/biohacker/daemon.env <<EOF
 DAEMON_HOST=0.0.0.0
 DAEMON_PORT=4000
 RUNNER_MODE=firecracker
@@ -61,7 +67,7 @@ VM_MEMORY_MIB=2048
 SSH_BOOT_TIMEOUT_MS=120000
 PRESERVE_FAILED_VM_STATE=false
 HOST_PUBLIC_IP=127.0.0.1
-HOST_INTERFACE=eth0
+HOST_INTERFACE=${HOST_INTERFACE}
 GUEST_NETWORK_BASE=172.29.0.0
 SSH_PORT_RANGE_START=2200
 SSH_PORT_RANGE_END=2299

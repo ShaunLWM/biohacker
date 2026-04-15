@@ -16,6 +16,49 @@ function sleep(durationMs: number) {
 	});
 }
 
+async function readSshBanner(
+	host: string,
+	port: number,
+	timeoutMs: number,
+): Promise<string | null> {
+	return await new Promise((resolve) => {
+		const socket = new Socket();
+		let settled = false;
+		let buffer = "";
+
+		const finish = (value: string | null) => {
+			if (settled) {
+				return;
+			}
+
+			settled = true;
+			socket.destroy();
+			resolve(value);
+		};
+
+		socket.setTimeout(timeoutMs);
+		socket.once("connect", () => {
+			// Wait for the SSH server banner instead of treating a bare TCP accept
+			// as success. This avoids returning ready while socket activation or
+			// sshd startup is still failing inside the guest.
+		});
+		socket.on("data", (chunk) => {
+			buffer += chunk.toString("utf8");
+			const newlineIndex = buffer.indexOf("\n");
+
+			if (newlineIndex === -1) {
+				return;
+			}
+
+			finish(buffer.slice(0, newlineIndex).trim());
+		});
+		socket.once("timeout", () => finish(null));
+		socket.once("error", () => finish(null));
+		socket.once("close", () => finish(null));
+		socket.connect(port, host);
+	});
+}
+
 async function waitForSocket(socketPath: string, pid: number): Promise<void> {
 	const startedAt = Date.now();
 
@@ -97,34 +140,16 @@ export async function waitForSsh(
 	const startedAt = Date.now();
 
 	while (Date.now() - startedAt < timeoutMs) {
-		const reachable = await new Promise<boolean>((resolve) => {
-			const socket = new Socket();
-			socket.setTimeout(1_000);
-			socket.once("connect", () => {
-				socket.destroy();
-				resolve(true);
-			});
-			socket.once("timeout", () => {
-				socket.destroy();
-				resolve(false);
-			});
-			socket.once("error", () => {
-				socket.destroy();
-				resolve(false);
-			});
-			socket.connect(port, host);
-		});
+		const banner = await readSshBanner(host, port, 1_500);
 
-		if (reachable) {
+		if (banner?.startsWith("SSH-")) {
 			return;
 		}
 
 		await sleep(1_000);
 	}
 
-	throw new Error(
-		`Timed out waiting for SSH to become available on ${host}:${port}`,
-	);
+	throw new Error(`Timed out waiting for SSH banner on ${host}:${port}`);
 }
 
 export async function waitForProcessExit(
