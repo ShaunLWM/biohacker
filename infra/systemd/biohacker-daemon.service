@@ -15,6 +15,13 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
 
 [Install]
 WantedBy=multi-user.target
