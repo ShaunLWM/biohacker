@@ -1,7 +1,13 @@
-import type { VmRecord, VmTerminationReason } from "@biohacker/shared";
+import type {
+	LabTemplateId,
+	VmRecord,
+	VmSecret,
+	VmTerminationReason,
+} from "@biohacker/shared";
 
 export interface VmReservation {
 	id: string;
+	templateId: LabTemplateId;
 	sshPort: number;
 	createdAt: string;
 	expiresAt: string;
@@ -13,6 +19,11 @@ export interface MockRuntime {
 
 export interface FirecrackerRuntime {
 	kind: "firecracker";
+	id: string;
+	templateId: LabTemplateId;
+	username: string;
+	createdAt: string;
+	expiresAt: string;
 	sshPort: number;
 	instanceDir: string;
 	apiSocketPath: string;
@@ -23,12 +34,6 @@ export interface FirecrackerRuntime {
 	guestIp: string;
 	guestMac: string;
 	writableRootfsPath: string;
-	seedImagePath: string;
-	sshPrivateKeyPath: string;
-	sshPublicKeyPath: string;
-	userDataPath: string;
-	metaDataPath: string;
-	networkConfigPath: string;
 	stdoutLogPath: string;
 	stderrLogPath: string;
 	metadataPath: string;
@@ -41,8 +46,14 @@ export interface ManagedVm {
 	runtime: VmRuntime;
 }
 
+export interface VmCreationResult {
+	instance: ManagedVm;
+	launchInstructions: string[];
+	secret: VmSecret;
+}
+
 export interface VmRunner {
-	create(reservation: VmReservation): Promise<ManagedVm>;
+	create(reservation: VmReservation): Promise<VmCreationResult>;
 	shutdown(instance: ManagedVm, reason: VmTerminationReason): Promise<void>;
-	reconcile(): Promise<void>;
+	reconcile(): Promise<ManagedVm[]>;
 }

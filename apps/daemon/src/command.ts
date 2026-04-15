@@ -4,6 +4,7 @@ interface RunCommandOptions {
 	allowFailure?: boolean;
 	cwd?: string;
 	env?: NodeJS.ProcessEnv;
+	stdin?: string;
 }
 
 export interface CommandResult {
@@ -21,7 +22,7 @@ export async function runCommand(
 		const child = spawn(command, args, {
 			cwd: options.cwd,
 			env: options.env,
-			stdio: ["ignore", "pipe", "pipe"],
+			stdio: ["pipe", "pipe", "pipe"],
 		});
 
 		let stdout = "";
@@ -34,6 +35,11 @@ export async function runCommand(
 		child.stderr.on("data", (chunk) => {
 			stderr += chunk.toString();
 		});
+
+		if (options.stdin !== undefined) {
+			child.stdin.write(options.stdin);
+		}
+		child.stdin.end();
 
 		child.on("error", reject);
 		child.on("close", (code) => {

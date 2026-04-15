@@ -1,9 +1,11 @@
 import {
+	type CreateVmRequest,
 	type CreateVmResponse,
-	type HealthResponse,
-	type ListVmsResponse,
+	createVmRequestSchema,
 	createVmResponseSchema,
+	type HealthResponse,
 	healthResponseSchema,
+	type ListVmsResponse,
 	listVmsResponseSchema,
 	vmRecordSchema,
 } from "@biohacker/shared";
@@ -49,9 +51,14 @@ export function listVms() {
 	);
 }
 
-export function createVm() {
-	return request("/v1/vms", { method: "POST" }, (value) =>
-		createVmResponseSchema.parse(value),
+export function createVm(input: CreateVmRequest) {
+	return request(
+		"/v1/vms",
+		{
+			method: "POST",
+			body: JSON.stringify(createVmRequestSchema.parse(input)),
+		},
+		(value) => createVmResponseSchema.parse(value),
 	);
 }
 

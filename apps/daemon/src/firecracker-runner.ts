@@ -1,16 +1,13 @@
-import { closeSync, openSync } from "node:fs";
-import { access, readdir, readFile, writeFile } from "node:fs/promises";
-import { constants } from "node:fs";
 import { spawn } from "node:child_process";
-import { basename, join } from "node:path";
+import { closeSync, constants, openSync } from "node:fs";
+import { access, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { Socket } from "node:net";
-
+import { basename, join } from "node:path";
+import { labTemplates, type VmTerminationReason } from "@biohacker/shared";
 import type { FastifyBaseLogger } from "fastify";
-import type { VmTerminationReason } from "@biohacker/shared";
-
-import type { DaemonConfig } from "./config.js";
+import { z } from "zod";
 import { runCommand } from "./command.js";
-import { ensureDir, readJsonFile, removePath, writeTextFile } from "./fs-utils.js";
+import type { DaemonConfig } from "./config.js";
 import {
 	putBootSource,
 	putDrive,
@@ -19,14 +16,24 @@ import {
 	sendCtrlAltDel,
 	startInstance,
 } from "./firecracker-api.js";
+import {
+	ensureDir,
+	readJsonFile,
+	removePath,
+	writeTextFile,
+} from "./fs-utils.js";
+import { getDaemonLabTemplate } from "./lab-templates.js";
 import type {
 	FirecrackerRuntime,
 	ManagedVm,
+	VmCreationResult,
 	VmReservation,
 	VmRunner,
 } from "./types.js";
 
-interface PersistedRuntime {
+const DEFAULT_NAMESERVERS = ["1.1.1.1", "8.8.8.8"];
+
+interface LegacyFirecrackerRuntime {
 	sshPort: number;
 	firecrackerPid: number;
 	tapName: string;
@@ -37,18 +44,56 @@ interface PersistedRuntime {
 	apiSocketPath: string;
 	instanceDir: string;
 	writableRootfsPath: string;
-	seedImagePath: string;
-	sshPrivateKeyPath: string;
-	sshPublicKeyPath: string;
-	userDataPath: string;
-	metaDataPath: string;
-	networkConfigPath: string;
 	stdoutLogPath: string;
 	stderrLogPath: string;
-	metadataPath: string;
+	metadataPath?: string;
+	[key: string]: unknown;
 }
 
-const DEFAULT_NAMESERVERS = ["1.1.1.1", "8.8.8.8"];
+const firecrackerTemplateIdSchema = z.custom<FirecrackerRuntime["templateId"]>(
+	(value): value is FirecrackerRuntime["templateId"] =>
+		typeof value === "string" && labTemplates.some((item) => item.id === value),
+);
+
+const firecrackerRuntimeSchema: z.ZodType<FirecrackerRuntime> = z.object({
+	kind: z.literal("firecracker"),
+	id: z.string().min(1),
+	templateId: firecrackerTemplateIdSchema,
+	username: z.string().min(1),
+	createdAt: z.string().datetime(),
+	expiresAt: z.string().datetime(),
+	sshPort: z.number().int().positive(),
+	instanceDir: z.string().min(1),
+	apiSocketPath: z.string().min(1),
+	firecrackerPid: z.number().int(),
+	tapName: z.string().min(1),
+	subnetCidr: z.string().min(1),
+	hostTapIp: z.string().min(1),
+	guestIp: z.string().min(1),
+	guestMac: z.string().min(1),
+	writableRootfsPath: z.string().min(1),
+	stdoutLogPath: z.string().min(1),
+	stderrLogPath: z.string().min(1),
+	metadataPath: z.string().min(1),
+});
+
+const legacyFirecrackerRuntimeSchema: z.ZodType<LegacyFirecrackerRuntime> = z
+	.object({
+		sshPort: z.number().int().positive(),
+		firecrackerPid: z.number().int(),
+		tapName: z.string().min(1),
+		subnetCidr: z.string().min(1),
+		hostTapIp: z.string().min(1),
+		guestIp: z.string().min(1),
+		guestMac: z.string().min(1),
+		apiSocketPath: z.string().min(1),
+		instanceDir: z.string().min(1),
+		writableRootfsPath: z.string().min(1),
+		stdoutLogPath: z.string().min(1),
+		stderrLogPath: z.string().min(1),
+		metadataPath: z.string().min(1).optional(),
+	})
+	.passthrough();
 
 export class FirecrackerRunner implements VmRunner {
 	constructor(
@@ -61,6 +106,7 @@ export class FirecrackerRunner implements VmRunner {
 		const entries = await readdir(this.config.INSTANCE_BASE_DIR, {
 			withFileTypes: true,
 		});
+		const restored: ManagedVm[] = [];
 
 		for (const entry of entries) {
 			if (!entry.isDirectory()) {
@@ -72,22 +118,47 @@ export class FirecrackerRunner implements VmRunner {
 
 			try {
 				await access(metadataPath, constants.R_OK);
-				const runtime = await readJsonFile<PersistedRuntime>(metadataPath);
-				this.logger.warn(
-					{ instanceDir, pid: runtime.firecrackerPid },
-					"Cleaning up orphaned Firecracker instance from a previous daemon run",
+				const { runtime, migratedFromLegacy } = await this.readPersistedRuntime(
+					instanceDir,
+					metadataPath,
 				);
-				await this.cleanupRuntime({
-					kind: "firecracker",
-					...runtime,
-				});
+				const managedVm = this.createManagedVm(runtime);
+
+				if (
+					runtime.firecrackerPid <= 0 ||
+					!(await this.isProcessAlive(runtime.firecrackerPid))
+				) {
+					this.logger.warn(
+						{ instanceDir, pid: runtime.firecrackerPid, id: runtime.id },
+						"Cleaning up abandoned Firecracker instance from a previous daemon run",
+					);
+					await this.cleanupRuntime(runtime);
+					continue;
+				}
+
+				if (new Date(runtime.expiresAt).getTime() <= Date.now()) {
+					this.logger.warn(
+						{ id: runtime.id, expiresAt: runtime.expiresAt },
+						"Cleaning up expired Firecracker instance during daemon startup",
+					);
+					await this.cleanupRuntime(runtime);
+					continue;
+				}
+
+				if (migratedFromLegacy) {
+					await this.persistRuntime(runtime);
+				}
+
+				restored.push(managedVm);
 			} catch {
 				await removePath(instanceDir);
 			}
 		}
+
+		return restored;
 	}
 
-	async create(reservation: VmReservation): Promise<ManagedVm> {
+	async create(reservation: VmReservation): Promise<VmCreationResult> {
 		const network = this.allocateNetwork(reservation.sshPort);
 		const instanceDir = join(this.config.INSTANCE_BASE_DIR, reservation.id);
 		const runtime = this.createRuntimePaths(instanceDir, reservation, network);
@@ -105,20 +176,15 @@ export class FirecrackerRunner implements VmRunner {
 		);
 
 		try {
+			step = "persist-runtime-initial";
+			this.logger.info({ id: reservation.id, step }, "VM create step");
+			await this.persistRuntime(runtime);
 			step = "clone-base-image";
 			this.logger.info({ id: reservation.id, step }, "VM create step");
 			await this.cloneBaseImage(runtime.writableRootfsPath);
-			step = "generate-ssh-keypair";
-			this.logger.info({ id: reservation.id, step }, "VM create step");
-			await this.generateSshKeypair(
-				runtime.sshPrivateKeyPath,
-				runtime.sshPublicKeyPath,
-			);
-			const publicKey = (await readFile(runtime.sshPublicKeyPath, "utf8")).trim();
-
 			step = "customize-rootfs";
 			this.logger.info({ id: reservation.id, step }, "VM create step");
-			await this.customizeRootfs(runtime, publicKey);
+			await this.customizeRootfs(runtime);
 			step = "configure-tap";
 			this.logger.info({ id: reservation.id, step }, "VM create step");
 			await this.configureTap(runtime);
@@ -142,7 +208,7 @@ export class FirecrackerRunner implements VmRunner {
 				{ id: reservation.id, step, guestIp: runtime.guestIp },
 				"VM create step",
 			);
-			await this.waitForSsh(runtime.guestIp, 22);
+			await this.waitForSsh(this.config.HOST_PUBLIC_IP, reservation.sshPort);
 			this.logger.info(
 				{
 					id: reservation.id,
@@ -153,19 +219,12 @@ export class FirecrackerRunner implements VmRunner {
 			);
 
 			return {
-				record: {
-					id: reservation.id,
-					state: "running",
-					host: this.config.HOST_PUBLIC_IP,
-					sshPort: reservation.sshPort,
-					username: "ubuntu",
-					privateKey: await readFile(runtime.sshPrivateKeyPath, "utf8"),
-					createdAt: reservation.createdAt,
-					expiresAt: reservation.expiresAt,
-					lastReason: null,
-				},
-				runtime,
-				};
+				instance: this.createManagedVm(runtime),
+				launchInstructions: getDaemonLabTemplate(
+					runtime.templateId,
+				).launchInstructions({ username: runtime.username }),
+				secret: getDaemonLabTemplate(runtime.templateId).createSecret(),
+			};
 		} catch (error) {
 			this.logger.error(
 				{ err: error, id: reservation.id, step },
@@ -241,9 +300,15 @@ export class FirecrackerRunner implements VmRunner {
 		},
 	): FirecrackerRuntime {
 		const shortId = reservation.id.replace(/-/g, "").slice(0, 11);
+		const template = getDaemonLabTemplate(reservation.templateId);
 
 		return {
 			kind: "firecracker",
+			id: reservation.id,
+			templateId: reservation.templateId,
+			username: template.username,
+			createdAt: reservation.createdAt,
+			expiresAt: reservation.expiresAt,
 			sshPort: reservation.sshPort,
 			instanceDir,
 			apiSocketPath: join(instanceDir, "firecracker.socket"),
@@ -254,12 +319,6 @@ export class FirecrackerRunner implements VmRunner {
 			guestIp: network.guestIp,
 			guestMac: network.guestMac,
 			writableRootfsPath: join(instanceDir, "rootfs.raw"),
-			seedImagePath: join(instanceDir, "seed.img"),
-			sshPrivateKeyPath: join(instanceDir, "id_ed25519"),
-			sshPublicKeyPath: join(instanceDir, "id_ed25519.pub"),
-			userDataPath: join(instanceDir, "user-data"),
-			metaDataPath: join(instanceDir, "meta-data"),
-			networkConfigPath: join(instanceDir, "network-config"),
 			stdoutLogPath: join(instanceDir, "firecracker.stdout.log"),
 			stderrLogPath: join(instanceDir, "firecracker.stderr.log"),
 			metadataPath: join(instanceDir, "runtime.json"),
@@ -275,35 +334,20 @@ export class FirecrackerRunner implements VmRunner {
 		]);
 	}
 
-	private async generateSshKeypair(
-		privateKeyPath: string,
-		publicKeyPath: string,
-	) {
-		await runCommand("ssh-keygen", [
-			"-q",
-			"-t",
-			"ed25519",
-			"-N",
-			"",
-			"-f",
-			privateKeyPath,
-		]);
-		await runCommand("chmod", ["0600", privateKeyPath]);
-		await runCommand("chmod", ["0644", publicKeyPath]);
-	}
-
-	private async customizeRootfs(
-		runtime: FirecrackerRuntime,
-		publicKey: string,
-	) {
+	private async customizeRootfs(runtime: FirecrackerRuntime) {
 		const hostname = `biohacker-${basename(runtime.instanceDir)}`;
 		const mountDir = join(runtime.instanceDir, "rootfs-mount");
 
 		await ensureDir(mountDir);
 
 		try {
-			await runCommand("mount", ["-o", "loop", runtime.writableRootfsPath, mountDir]);
-			await this.writeRootfsConfig(mountDir, runtime, hostname, publicKey);
+			await runCommand("mount", [
+				"-o",
+				"loop",
+				runtime.writableRootfsPath,
+				mountDir,
+			]);
+			await this.writeRootfsConfig(mountDir, runtime, hostname);
 		} finally {
 			await runCommand("umount", [mountDir], { allowFailure: true });
 			await removePath(mountDir);
@@ -314,30 +358,33 @@ export class FirecrackerRunner implements VmRunner {
 		mountDir: string,
 		runtime: FirecrackerRuntime,
 		hostname: string,
-		publicKey: string,
 	) {
-		const ubuntuAccount = await this.ensureGuestAccount(mountDir, "ubuntu");
-		const ubuntuHome = join(
+		const template = getDaemonLabTemplate(runtime.templateId);
+		const guestAccount = await this.ensureGuestAccount(
 			mountDir,
-			ubuntuAccount.home.replace(/^\/+/, ""),
+			runtime.username,
 		);
-		const sshDir = join(ubuntuHome, ".ssh");
-		const accountOwner = `${ubuntuAccount.uid}:${ubuntuAccount.gid}`;
+		const guestHome = join(mountDir, guestAccount.home.replace(/^\/+/, ""));
+		const sshConfigDir = join(mountDir, "etc", "ssh", "sshd_config.d");
 
-		await ensureDir(ubuntuHome);
-		await runCommand("chown", [accountOwner, ubuntuHome]);
-		await ensureDir(sshDir);
-		await writeTextFile(join(sshDir, "authorized_keys"), `${publicKey}\n`);
-		await runCommand("chmod", ["0700", sshDir]);
-		await runCommand("chmod", ["0600", join(sshDir, "authorized_keys")]);
-		await runCommand("chown", ["-R", accountOwner, sshDir]);
+		await ensureDir(guestHome);
+		await runCommand("chown", [
+			`${guestAccount.uid}:${guestAccount.gid}`,
+			guestHome,
+		]);
+
+		if (template.weakPassword) {
+			await runCommand("chroot", [mountDir, "/usr/sbin/chpasswd"], {
+				stdin: `${runtime.username}:${template.weakPassword}\n`,
+			});
+		}
 
 		await writeTextFile(join(mountDir, "etc", "hostname"), `${hostname}\n`);
 		await writeTextFile(
 			join(mountDir, "etc", "hosts"),
 			[
 				"127.0.0.1 localhost",
-				"127.0.1.1 " + hostname,
+				`127.0.1.1 ${hostname}`,
 				"::1 localhost ip6-localhost ip6-loopback",
 				"ff02::1 ip6-allnodes",
 				"ff02::2 ip6-allrouters",
@@ -361,8 +408,28 @@ export class FirecrackerRunner implements VmRunner {
 		);
 		await ensureDir(join(mountDir, "etc", "cloud", "cloud.cfg.d"));
 		await writeTextFile(
-			join(mountDir, "etc", "cloud", "cloud.cfg.d", "99-biohacker-disable-network-config.cfg"),
+			join(
+				mountDir,
+				"etc",
+				"cloud",
+				"cloud.cfg.d",
+				"99-biohacker-disable-network-config.cfg",
+			),
 			"network: {config: disabled}\n",
+		);
+		await ensureDir(sshConfigDir);
+		await writeTextFile(
+			join(sshConfigDir, "25-biohacker-lab.conf"),
+			[
+				"PasswordAuthentication yes",
+				"KbdInteractiveAuthentication no",
+				"ChallengeResponseAuthentication no",
+				"PubkeyAuthentication no",
+				"PermitRootLogin no",
+				"UsePAM yes",
+				"AuthenticationMethods password",
+				"",
+			].join("\n"),
 		);
 	}
 
@@ -373,17 +440,22 @@ export class FirecrackerRunner implements VmRunner {
 			return existing;
 		}
 
-		await runCommand("chroot", [
+		const userAddArgs = [
 			mountDir,
 			"/usr/sbin/useradd",
 			"-m",
 			"-s",
 			"/bin/bash",
 			"-U",
-			"-G",
-			"sudo",
-			username,
-		]);
+		];
+
+		if (username === "ubuntu" && (await this.groupExists(mountDir, "sudo"))) {
+			userAddArgs.push("-G", "sudo");
+		}
+
+		userAddArgs.push(username);
+
+		await runCommand("chroot", userAddArgs);
 
 		const created = await this.readGuestAccount(mountDir, username);
 
@@ -392,6 +464,14 @@ export class FirecrackerRunner implements VmRunner {
 		}
 
 		return created;
+	}
+
+	private async groupExists(mountDir: string, groupName: string) {
+		const groupPath = join(mountDir, "etc", "group");
+		const groupContents = await readFile(groupPath, "utf8");
+		return groupContents
+			.split("\n")
+			.some((line) => line.startsWith(`${groupName}:`));
 	}
 
 	private async readGuestAccount(mountDir: string, username: string) {
@@ -452,6 +532,22 @@ export class FirecrackerRunner implements VmRunner {
 			"PREROUTING",
 			"-i",
 			this.config.HOST_INTERFACE,
+			"-p",
+			"tcp",
+			"--dport",
+			String(sshPort),
+			"-j",
+			"DNAT",
+			"--to-destination",
+			`${runtime.guestIp}:22`,
+		]);
+		await runCommand("iptables", [
+			"-t",
+			"nat",
+			"-A",
+			"OUTPUT",
+			"-d",
+			this.config.HOST_PUBLIC_IP,
 			"-p",
 			"tcp",
 			"--dport",
@@ -530,8 +626,7 @@ export class FirecrackerRunner implements VmRunner {
 		});
 		await putBootSource(runtime.apiSocketPath, {
 			kernel_image_path: this.config.KERNEL_IMAGE_PATH,
-			boot_args:
-				"console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw",
+			boot_args: "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw",
 		});
 		await putDrive(runtime.apiSocketPath, "rootfs", {
 			path_on_host: runtime.writableRootfsPath,
@@ -625,34 +720,106 @@ export class FirecrackerRunner implements VmRunner {
 		}
 	}
 
+	private async readPersistedRuntime(
+		instanceDir: string,
+		metadataPath: string,
+	): Promise<{
+		runtime: FirecrackerRuntime;
+		migratedFromLegacy: boolean;
+	}> {
+		const rawRuntime = await readJsonFile<unknown>(metadataPath);
+		const currentRuntime = firecrackerRuntimeSchema.safeParse(rawRuntime);
+
+		if (currentRuntime.success) {
+			return {
+				runtime: currentRuntime.data,
+				migratedFromLegacy: false,
+			};
+		}
+
+		const legacyRuntime = legacyFirecrackerRuntimeSchema.parse(rawRuntime);
+
+		return {
+			runtime: await this.migrateLegacyRuntime(
+				instanceDir,
+				metadataPath,
+				legacyRuntime,
+			),
+			migratedFromLegacy: true,
+		};
+	}
+
+	private async migrateLegacyRuntime(
+		instanceDir: string,
+		metadataPath: string,
+		legacyRuntime: LegacyFirecrackerRuntime,
+	): Promise<FirecrackerRuntime> {
+		const metadataStats = await stat(metadataPath);
+		const createdAt = this.inferLegacyCreatedAt(metadataStats);
+		const expiresAt = new Date(
+			new Date(createdAt).getTime() + this.config.VM_TTL_MINUTES * 60 * 1000,
+		).toISOString();
+		const templateId = this.getLegacyTemplateId();
+		const template = getDaemonLabTemplate(templateId);
+		const runtime: FirecrackerRuntime = {
+			kind: "firecracker",
+			id: basename(instanceDir),
+			templateId,
+			username: template.username,
+			createdAt,
+			expiresAt,
+			sshPort: legacyRuntime.sshPort,
+			instanceDir,
+			apiSocketPath: legacyRuntime.apiSocketPath,
+			firecrackerPid: legacyRuntime.firecrackerPid,
+			tapName: legacyRuntime.tapName,
+			subnetCidr: legacyRuntime.subnetCidr,
+			hostTapIp: legacyRuntime.hostTapIp,
+			guestIp: legacyRuntime.guestIp,
+			guestMac: legacyRuntime.guestMac,
+			writableRootfsPath: legacyRuntime.writableRootfsPath,
+			stdoutLogPath: legacyRuntime.stdoutLogPath,
+			stderrLogPath: legacyRuntime.stderrLogPath,
+			metadataPath,
+		};
+
+		this.logger.info(
+			{ id: runtime.id, metadataPath },
+			"Migrated legacy Firecracker runtime metadata during daemon startup",
+		);
+
+		return runtime;
+	}
+
+	private inferLegacyCreatedAt(
+		metadataStats: Awaited<ReturnType<typeof stat>>,
+	) {
+		const candidates = [
+			metadataStats.mtimeMs,
+			metadataStats.ctimeMs,
+			metadataStats.birthtimeMs,
+		]
+			.map((value) => Number(value))
+			.filter((value) => Number.isFinite(value) && value > 0);
+		const createdAtMs = candidates[0] ?? Date.now();
+
+		return new Date(createdAtMs).toISOString();
+	}
+
+	private getLegacyTemplateId() {
+		if (labTemplates.length !== 1) {
+			throw new Error(
+				"Cannot restore legacy Firecracker metadata when multiple lab templates exist",
+			);
+		}
+
+		return labTemplates[0].id;
+	}
+
 	private async persistRuntime(runtime: FirecrackerRuntime) {
 		await writeFile(
 			runtime.metadataPath,
-			JSON.stringify(
-				{
-					sshPort: runtime.sshPort,
-					firecrackerPid: runtime.firecrackerPid,
-					tapName: runtime.tapName,
-					subnetCidr: runtime.subnetCidr,
-					hostTapIp: runtime.hostTapIp,
-					guestIp: runtime.guestIp,
-					guestMac: runtime.guestMac,
-					apiSocketPath: runtime.apiSocketPath,
-					instanceDir: runtime.instanceDir,
-					writableRootfsPath: runtime.writableRootfsPath,
-					seedImagePath: runtime.seedImagePath,
-					sshPrivateKeyPath: runtime.sshPrivateKeyPath,
-					sshPublicKeyPath: runtime.sshPublicKeyPath,
-					userDataPath: runtime.userDataPath,
-					metaDataPath: runtime.metaDataPath,
-					networkConfigPath: runtime.networkConfigPath,
-					stdoutLogPath: runtime.stdoutLogPath,
-					stderrLogPath: runtime.stderrLogPath,
-					metadataPath: runtime.metadataPath,
-				},
-				null,
-				2,
-			),
+			JSON.stringify(runtime, null, 2),
 			"utf8",
 		);
 	}
@@ -667,7 +834,10 @@ export class FirecrackerRunner implements VmRunner {
 			"Cleaning up Firecracker runtime resources",
 		);
 
-		if (runtime.firecrackerPid > 0 && (await this.isProcessAlive(runtime.firecrackerPid))) {
+		if (
+			runtime.firecrackerPid > 0 &&
+			(await this.isProcessAlive(runtime.firecrackerPid))
+		) {
 			try {
 				process.kill(runtime.firecrackerPid, "SIGTERM");
 			} catch {
@@ -677,6 +847,26 @@ export class FirecrackerRunner implements VmRunner {
 			await this.waitForProcessExit(runtime.firecrackerPid, 5_000);
 		}
 
+		await runCommand(
+			"iptables",
+			[
+				"-t",
+				"nat",
+				"-D",
+				"OUTPUT",
+				"-d",
+				this.config.HOST_PUBLIC_IP,
+				"-p",
+				"tcp",
+				"--dport",
+				String(runtime.sshPort),
+				"-j",
+				"DNAT",
+				"--to-destination",
+				`${runtime.guestIp}:22`,
+			],
+			{ allowFailure: true },
+		);
 		await runCommand(
 			"iptables",
 			[
@@ -745,11 +935,9 @@ export class FirecrackerRunner implements VmRunner {
 			],
 			{ allowFailure: true },
 		);
-		await runCommand(
-			"ip",
-			["link", "delete", "dev", runtime.tapName],
-			{ allowFailure: true },
-		);
+		await runCommand("ip", ["link", "delete", "dev", runtime.tapName], {
+			allowFailure: true,
+		});
 		await removePath(runtime.instanceDir);
 	}
 
@@ -761,11 +949,8 @@ export class FirecrackerRunner implements VmRunner {
 		}
 
 		return (
-			(parts[0] << 24) |
-			(parts[1] << 16) |
-			(parts[2] << 8) |
-			parts[3]
-		) >>> 0;
+			((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0
+		);
 	}
 
 	private formatIpv4(value: number) {
@@ -788,5 +973,22 @@ export class FirecrackerRunner implements VmRunner {
 		return new Promise((resolve) => {
 			setTimeout(resolve, durationMs);
 		});
+	}
+
+	private createManagedVm(runtime: FirecrackerRuntime): ManagedVm {
+		return {
+			record: {
+				id: runtime.id,
+				templateId: runtime.templateId,
+				state: "running",
+				host: this.config.HOST_PUBLIC_IP,
+				sshPort: runtime.sshPort,
+				username: runtime.username,
+				createdAt: runtime.createdAt,
+				expiresAt: runtime.expiresAt,
+				lastReason: null,
+			},
+			runtime,
+		};
 	}
 }

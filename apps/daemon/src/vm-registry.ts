@@ -26,10 +26,11 @@ export class VmRegistry {
 		return this.#items.get(id) ?? null;
 	}
 
-	createReservation(): VmReservation {
+	createReservation(templateId: VmReservation["templateId"]): VmReservation {
 		const now = new Date();
 		const reservation: VmReservation = {
 			id: randomUUID(),
+			templateId,
 			sshPort: this.#allocatePort(),
 			createdAt: now.toISOString(),
 			expiresAt: new Date(

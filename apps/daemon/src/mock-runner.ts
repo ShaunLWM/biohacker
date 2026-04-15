@@ -1,34 +1,43 @@
-import type { VmRunner } from "./types.js";
-import type { VmReservation } from "./types.js";
-
-import type { ManagedVm } from "./types.js";
 import type { VmTerminationReason } from "@biohacker/shared";
-
-const SSH_PRIVATE_KEY_PLACEHOLDER = `-----BEGIN OPENSSH PRIVATE KEY-----
-mock-runner-placeholder
------END OPENSSH PRIVATE KEY-----`;
+import { getDaemonLabTemplate } from "./lab-templates.js";
+import type {
+	ManagedVm,
+	VmCreationResult,
+	VmReservation,
+	VmRunner,
+} from "./types.js";
 
 export class MockRunner implements VmRunner {
 	constructor(private readonly host: string) {}
 
-	async reconcile() {}
+	async reconcile() {
+		return [];
+	}
 
-	async create(reservation: VmReservation): Promise<ManagedVm> {
+	async create(reservation: VmReservation): Promise<VmCreationResult> {
+		const template = getDaemonLabTemplate(reservation.templateId);
+
 		return {
-			record: {
-				id: reservation.id,
-				state: "running",
-				host: this.host,
-				sshPort: reservation.sshPort,
-				username: "ubuntu",
-				privateKey: SSH_PRIVATE_KEY_PLACEHOLDER,
-				createdAt: reservation.createdAt,
-				expiresAt: reservation.expiresAt,
-				lastReason: null,
+			instance: {
+				record: {
+					id: reservation.id,
+					templateId: reservation.templateId,
+					state: "running" as const,
+					host: this.host,
+					sshPort: reservation.sshPort,
+					username: template.username,
+					createdAt: reservation.createdAt,
+					expiresAt: reservation.expiresAt,
+					lastReason: null,
+				},
+				runtime: {
+					kind: "mock" as const,
+				},
 			},
-			runtime: {
-				kind: "mock",
-			},
+			launchInstructions: template.launchInstructions({
+				username: template.username,
+			}),
+			secret: template.createSecret(),
 		};
 	}
 

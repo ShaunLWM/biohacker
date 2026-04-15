@@ -6,7 +6,10 @@ const INTERNAL_DAEMON_URL =
 async function proxyToDaemon(request: Request) {
 	const incomingUrl = new URL(request.url);
 	const daemonPath = incomingUrl.pathname.replace(/^\/api\/control/, "") || "/";
-	const targetUrl = new URL(`${daemonPath}${incomingUrl.search}`, INTERNAL_DAEMON_URL);
+	const targetUrl = new URL(
+		`${daemonPath}${incomingUrl.search}`,
+		INTERNAL_DAEMON_URL,
+	);
 	const requestText =
 		request.method === "GET" || request.method === "HEAD"
 			? undefined
