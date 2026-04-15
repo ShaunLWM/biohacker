@@ -7,8 +7,9 @@ import {
 	listVmsResponseSchema,
 } from "@biohacker/shared";
 import Fastify from "fastify";
+import { z } from "zod";
 import type { DaemonConfig } from "./config.js";
-import { exists } from "./config.js";
+import { exists } from "./fs-utils.js";
 import { FirecrackerRunner } from "./firecracker-runner.js";
 import { MockRunner } from "./mock-runner.js";
 import type { ManagedVm, VmRunner } from "./types.js";
@@ -33,17 +34,22 @@ export async function buildApp(
 		registry.add(instance);
 	}
 
-	async function shutdownVm(instance: ManagedVm, reason: "user" | "expired") {
+	type ShutdownResult =
+		| { ok: true }
+		| { ok: false; reason: "already-shutting-down" };
+
+	async function shutdownVm(
+		instance: ManagedVm,
+		reason: "user" | "expired",
+	): Promise<ShutdownResult> {
 		if (shuttingDown.has(instance.record.id)) {
-			return false;
+			return { ok: false, reason: "already-shutting-down" };
 		}
-
 		shuttingDown.add(instance.record.id);
-
 		try {
 			await activeRunner.shutdown(instance, reason);
 			registry.remove(instance.record.id);
-			return true;
+			return { ok: true };
 		} finally {
 			shuttingDown.delete(instance.record.id);
 		}
@@ -127,28 +133,31 @@ export async function buildApp(
 			registry.releaseReservation(reservation.id);
 			app.log.error({ err: error }, "Failed to create VM");
 			return reply.code(500).send({
-				message:
-					error instanceof Error
-						? error.message
-						: "Failed to create Firecracker VM",
+				message: "Failed to create Firecracker VM",
 			});
 		}
 	});
 
 	app.post("/v1/vms/:id/shutdown", async (request, reply) => {
-		const params = request.params as { id: string };
-		const vm = registry.get(params.id);
+		const paramsResult = z.object({ id: z.string().uuid() }).safeParse(request.params);
+		if (!paramsResult.success) {
+			return reply.code(400).send({ message: "Invalid VM ID" });
+		}
+		const vm = registry.get(paramsResult.data.id);
 
 		if (!vm) {
 			return reply.code(404).send({ message: "VM not found" });
 		}
 
-		if (shuttingDown.has(vm.record.id)) {
-			return reply.code(409).send({ message: "VM is already shutting down" });
-		}
-
 		try {
-			await shutdownVm(vm, "user");
+			const result = await shutdownVm(vm, "user");
+
+			if (!result.ok) {
+				switch (result.reason) {
+					case "already-shutting-down":
+						return reply.code(409).send({ message: "VM is already shutting down" });
+				}
+			}
 
 			return {
 				...vm.record,
@@ -156,11 +165,8 @@ export async function buildApp(
 				lastReason: "user",
 			};
 		} catch (error) {
-			app.log.error({ err: error, id: params.id }, "Failed to shut down VM");
-			return reply.code(500).send({
-				message:
-					error instanceof Error ? error.message : "Failed to shut down VM",
-			});
+			app.log.error({ err: error, id: paramsResult.data.id }, "Failed to shut down VM");
+			return reply.code(500).send({ message: "Failed to shut down VM" });
 		}
 	});
 

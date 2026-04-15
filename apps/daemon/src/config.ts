@@ -1,5 +1,3 @@
-import { constants } from "node:fs";
-import { access } from "node:fs/promises";
 import { z } from "zod";
 
 const envSchema = z
@@ -45,11 +43,3 @@ export function loadConfig() {
 	return envSchema.parse(process.env);
 }
 
-export async function exists(path: string) {
-	try {
-		await access(path, constants.R_OK);
-		return true;
-	} catch {
-		return false;
-	}
-}

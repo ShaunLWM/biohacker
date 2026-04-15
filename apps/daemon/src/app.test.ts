@@ -49,7 +49,7 @@ function createManagedVm(id: string): ManagedVm {
 }
 
 test("create returns one-time lab details, but list and shutdown never expose secrets", async () => {
-	const createdVm = createManagedVm("vm-created");
+	const createdVm = createManagedVm("a0000000-0000-4000-8000-000000000001");
 	const shutdownCalls: string[] = [];
 	const runner: VmRunner = {
 		async reconcile() {
