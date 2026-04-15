@@ -16,3 +16,4 @@ coverage
 apps/web/node_modules
 apps/daemon/node_modules
 packages/shared/node_modules
+.worktrees
