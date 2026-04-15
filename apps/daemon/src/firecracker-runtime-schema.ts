@@ -3,16 +3,10 @@ import { basename, join } from "node:path";
 import { labTemplates, type VmRecord } from "@biohacker/shared";
 import { z } from "zod";
 import type { DaemonConfig } from "./config.js";
+import type { NetworkAllocation } from "./firecracker-network.js";
 import { readJsonFile } from "./fs-utils.js";
 import { getDaemonLabTemplate } from "./lab-templates.js";
 import type { FirecrackerRuntime, ManagedVm, VmReservation } from "./types.js";
-
-type NetworkAllocation = {
-	hostTapIp: string;
-	guestIp: string;
-	subnetCidr: string;
-	guestMac: string;
-};
 
 export interface LegacyFirecrackerRuntime {
 	sshPort: number;
