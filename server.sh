@@ -19,8 +19,19 @@ compose() {
   docker compose -f "$APP_DIR/compose.yml" --project-directory "$APP_DIR" "$@"
 }
 
+build_daemon() {
+  pnpm --dir "$APP_DIR/apps/daemon" build
+}
+
+ensure_daemon_build() {
+  if [[ ! -f "$APP_DIR/apps/daemon/dist/index.js" ]]; then
+    build_daemon
+  fi
+}
+
 case "$ACTION" in
   start|resume)
+    ensure_daemon_build
     systemctl enable --now "$SERVICE_NAME"
     systemctl start "$SERVICE_NAME"
     compose up -d
@@ -29,7 +40,8 @@ case "$ACTION" in
     systemctl stop "$SERVICE_NAME"
     compose down
     ;;
-  restart)
+  restart|rebuild)
+    build_daemon
     compose up -d --build
     systemctl restart "$SERVICE_NAME"
     ;;
@@ -48,6 +60,7 @@ Usage:
   server.sh start
   server.sh stop
   server.sh restart
+  server.sh rebuild
   server.sh status
   server.sh logs
   server.sh pause

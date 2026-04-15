@@ -185,14 +185,17 @@ export class FirecrackerRunner implements VmRunner {
 			);
 			step = "wait-for-ssh";
 			this.logger.info(
-				{ id: reservation.id, step, guestIp: runtime.guestIp },
+				{
+					id: reservation.id,
+					step,
+					probeHost: runtime.guestIp,
+					probePort: 22,
+					externalHost: this.config.HOST_PUBLIC_IP,
+					externalPort: reservation.sshPort,
+				},
 				"VM create step",
 			);
-			await waitForSsh(
-				this.config.HOST_PUBLIC_IP,
-				reservation.sshPort,
-				this.config.SSH_BOOT_TIMEOUT_MS,
-			);
+			await waitForSsh(runtime.guestIp, 22, this.config.SSH_BOOT_TIMEOUT_MS);
 			this.logger.info(
 				{
 					id: reservation.id,

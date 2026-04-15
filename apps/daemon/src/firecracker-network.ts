@@ -68,8 +68,31 @@ export async function configureIptables(
 	guestIp: string,
 	sshPort: number,
 ): Promise<void> {
+	// Allow replies for host-originated connections to the guest while still
+	// blocking unsolicited guest-to-host traffic below.
+	await runCommand("iptables", [
+		"-I",
+		"INPUT",
+		"1",
+		"-i",
+		tapName,
+		"-m",
+		"state",
+		"--state",
+		"ESTABLISHED,RELATED",
+		"-j",
+		"ACCEPT",
+	]);
 	// Block all traffic from guest TAP interface to host services (1a)
-	await runCommand("iptables", ["-I", "INPUT", "-i", tapName, "-j", "DROP"]);
+	await runCommand("iptables", [
+		"-I",
+		"INPUT",
+		"2",
+		"-i",
+		tapName,
+		"-j",
+		"DROP",
+	]);
 	// Block inter-TAP routing - VM can only forward to the physical NIC (1b)
 	await runCommand("iptables", [
 		"-I",
@@ -184,6 +207,22 @@ export async function cleanupNetwork(
 	guestIp: string,
 	sshPort: number,
 ): Promise<void> {
+	await runCommand(
+		"iptables",
+		[
+			"-D",
+			"INPUT",
+			"-i",
+			tapName,
+			"-m",
+			"state",
+			"--state",
+			"ESTABLISHED,RELATED",
+			"-j",
+			"ACCEPT",
+		],
+		{ allowFailure: true },
+	);
 	await runCommand(
 		"iptables",
 		[
