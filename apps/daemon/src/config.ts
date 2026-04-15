@@ -4,7 +4,7 @@ import { z } from "zod";
 
 const envSchema = z
 	.object({
-		DAEMON_HOST: z.string().default("0.0.0.0"),
+		DAEMON_HOST: z.string().default("127.0.0.1"),
 		DAEMON_PORT: z.coerce.number().int().positive().default(4000),
 		RUNNER_MODE: z.enum(["mock", "firecracker"]).default("mock"),
 		VM_TTL_MINUTES: z.coerce.number().int().positive().default(60),

@@ -525,6 +525,38 @@ export class FirecrackerRunner implements VmRunner {
 		runtime: FirecrackerRuntime,
 		sshPort: number,
 	) {
+		// Block all traffic from guest TAP interface to host services (1a)
+		await runCommand("iptables", [
+			"-I",
+			"INPUT",
+			"-i",
+			runtime.tapName,
+			"-j",
+			"DROP",
+		]);
+		// Block inter-TAP routing - VM can only forward to the physical NIC (1b)
+		await runCommand("iptables", [
+			"-I",
+			"FORWARD",
+			"-i",
+			runtime.tapName,
+			"!",
+			"-o",
+			this.config.HOST_INTERFACE,
+			"-j",
+			"DROP",
+		]);
+		// Block cloud metadata endpoint (1c)
+		await runCommand("iptables", [
+			"-I",
+			"FORWARD",
+			"-s",
+			runtime.subnetCidr,
+			"-d",
+			"169.254.169.254",
+			"-j",
+			"DROP",
+		]);
 		await runCommand("iptables", [
 			"-t",
 			"nat",
@@ -569,6 +601,7 @@ export class FirecrackerRunner implements VmRunner {
 			"-j",
 			"MASQUERADE",
 		]);
+		// Allow only return traffic for established/related connections (1d)
 		await runCommand("iptables", [
 			"-A",
 			"FORWARD",
@@ -576,8 +609,10 @@ export class FirecrackerRunner implements VmRunner {
 			runtime.tapName,
 			"-o",
 			this.config.HOST_INTERFACE,
-			"-s",
-			runtime.subnetCidr,
+			"-m",
+			"state",
+			"--state",
+			"ESTABLISHED,RELATED",
 			"-j",
 			"ACCEPT",
 		]);
@@ -905,6 +940,40 @@ export class FirecrackerRunner implements VmRunner {
 		);
 		await runCommand(
 			"iptables",
+			["-D", "INPUT", "-i", runtime.tapName, "-j", "DROP"],
+			{ allowFailure: true },
+		);
+		await runCommand(
+			"iptables",
+			[
+				"-D",
+				"FORWARD",
+				"-i",
+				runtime.tapName,
+				"!",
+				"-o",
+				this.config.HOST_INTERFACE,
+				"-j",
+				"DROP",
+			],
+			{ allowFailure: true },
+		);
+		await runCommand(
+			"iptables",
+			[
+				"-D",
+				"FORWARD",
+				"-s",
+				runtime.subnetCidr,
+				"-d",
+				"169.254.169.254",
+				"-j",
+				"DROP",
+			],
+			{ allowFailure: true },
+		);
+		await runCommand(
+			"iptables",
 			[
 				"-D",
 				"FORWARD",
@@ -912,8 +981,10 @@ export class FirecrackerRunner implements VmRunner {
 				runtime.tapName,
 				"-o",
 				this.config.HOST_INTERFACE,
-				"-s",
-				runtime.subnetCidr,
+				"-m",
+				"state",
+				"--state",
+				"ESTABLISHED,RELATED",
 				"-j",
 				"ACCEPT",
 			],
