@@ -1,5 +1,6 @@
-import type { CreateVmResponse, VmSecret } from "@biohacker/shared";
+import type { VmSecret } from "@biohacker/shared";
 import { labTemplates } from "@biohacker/shared";
+import type { CreateVmResponse } from "../lib/api";
 import { buildSshCommand } from "../lib/ssh";
 
 type Props = {

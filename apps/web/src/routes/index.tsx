@@ -130,7 +130,11 @@ function App() {
 				<ActiveVmList
 					vms={vms}
 					isLoading={vmListQuery.isLoading}
-					isShuttingDown={shutdownVmMutation.isPending}
+					shuttingDownId={
+						shutdownVmMutation.isPending
+							? (shutdownVmMutation.variables ?? null)
+							: null
+					}
 					onShutdown={(id) => {
 						shutdownVmMutation.mutate(id);
 					}}

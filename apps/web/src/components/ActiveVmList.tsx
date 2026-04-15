@@ -4,14 +4,14 @@ import { labTemplates } from "@biohacker/shared";
 type Props = {
 	vms: VmRecord[];
 	isLoading: boolean;
-	isShuttingDown: boolean;
+	shuttingDownId: string | null;
 	onShutdown: (id: string) => void;
 };
 
 export default function ActiveVmList({
 	vms,
 	isLoading,
-	isShuttingDown,
+	shuttingDownId,
 	onShutdown,
 }: Props) {
 	return (
@@ -59,7 +59,7 @@ export default function ActiveVmList({
 									onClick={() => {
 										onShutdown(vm.id);
 									}}
-									disabled={isShuttingDown}
+									disabled={shuttingDownId === vm.id}
 									className="rounded-full border border-[rgba(141,60,47,0.18)] bg-[rgba(141,60,47,0.08)] px-4 py-2 text-sm font-semibold text-[#8d3c2f] transition hover:-translate-y-0.5 hover:bg-[rgba(141,60,47,0.12)] disabled:cursor-not-allowed disabled:opacity-60"
 								>
 									Shutdown
