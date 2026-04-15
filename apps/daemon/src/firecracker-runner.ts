@@ -601,7 +601,7 @@ export class FirecrackerRunner implements VmRunner {
 			"-j",
 			"MASQUERADE",
 		]);
-		// Allow only return traffic for established/related connections (1d)
+		// Allow only return traffic for established/related connections (1e)
 		await runCommand("iptables", [
 			"-A",
 			"FORWARD",
@@ -615,6 +615,16 @@ export class FirecrackerRunner implements VmRunner {
 			"ESTABLISHED,RELATED",
 			"-j",
 			"ACCEPT",
+		]);
+		await runCommand("iptables", [
+			"-A",
+			"FORWARD",
+			"-i",
+			runtime.tapName,
+			"-o",
+			this.config.HOST_INTERFACE,
+			"-j",
+			"DROP",
 		]);
 		await runCommand("iptables", [
 			"-A",
@@ -987,6 +997,20 @@ export class FirecrackerRunner implements VmRunner {
 				"ESTABLISHED,RELATED",
 				"-j",
 				"ACCEPT",
+			],
+			{ allowFailure: true },
+		);
+		await runCommand(
+			"iptables",
+			[
+				"-D",
+				"FORWARD",
+				"-i",
+				runtime.tapName,
+				"-o",
+				this.config.HOST_INTERFACE,
+				"-j",
+				"DROP",
 			],
 			{ allowFailure: true },
 		);
