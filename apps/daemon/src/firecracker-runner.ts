@@ -96,7 +96,11 @@ export class FirecrackerRunner implements VmRunner {
 				}
 
 				restored.push(managedVm);
-			} catch {
+			} catch (err) {
+				this.logger.warn(
+					{ instanceDir, err },
+					"Removing unrecoverable Firecracker instance directory during reconcile",
+				);
 				await removePath(instanceDir);
 			}
 		}

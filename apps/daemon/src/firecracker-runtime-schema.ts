@@ -8,7 +8,7 @@ import { readJsonFile } from "./fs-utils.js";
 import { getDaemonLabTemplate } from "./lab-templates.js";
 import type { FirecrackerRuntime, ManagedVm, VmReservation } from "./types.js";
 
-export interface LegacyFirecrackerRuntime {
+interface LegacyFirecrackerRuntime {
 	sshPort: number;
 	firecrackerPid: number;
 	tapName: string;
@@ -25,9 +25,7 @@ export interface LegacyFirecrackerRuntime {
 	[key: string]: unknown;
 }
 
-export const firecrackerTemplateIdSchema = z.custom<
-	FirecrackerRuntime["templateId"]
->(
+const firecrackerTemplateIdSchema = z.custom<FirecrackerRuntime["templateId"]>(
 	(value): value is FirecrackerRuntime["templateId"] =>
 		typeof value === "string" && labTemplates.some((item) => item.id === value),
 );
@@ -56,24 +54,23 @@ export const firecrackerRuntimeSchema: z.ZodType<FirecrackerRuntime> = z.object(
 	},
 );
 
-export const legacyFirecrackerRuntimeSchema: z.ZodType<LegacyFirecrackerRuntime> =
-	z
-		.object({
-			sshPort: z.number().int().positive(),
-			firecrackerPid: z.number().int(),
-			tapName: z.string().min(1),
-			subnetCidr: z.string().min(1),
-			hostTapIp: z.string().min(1),
-			guestIp: z.string().min(1),
-			guestMac: z.string().min(1),
-			apiSocketPath: z.string().min(1),
-			instanceDir: z.string().min(1),
-			writableRootfsPath: z.string().min(1),
-			stdoutLogPath: z.string().min(1),
-			stderrLogPath: z.string().min(1),
-			metadataPath: z.string().min(1).optional(),
-		})
-		.passthrough();
+const legacyFirecrackerRuntimeSchema: z.ZodType<LegacyFirecrackerRuntime> = z
+	.object({
+		sshPort: z.number().int().positive(),
+		firecrackerPid: z.number().int(),
+		tapName: z.string().min(1),
+		subnetCidr: z.string().min(1),
+		hostTapIp: z.string().min(1),
+		guestIp: z.string().min(1),
+		guestMac: z.string().min(1),
+		apiSocketPath: z.string().min(1),
+		instanceDir: z.string().min(1),
+		writableRootfsPath: z.string().min(1),
+		stdoutLogPath: z.string().min(1),
+		stderrLogPath: z.string().min(1),
+		metadataPath: z.string().min(1).optional(),
+	})
+	.passthrough();
 
 export function createRuntimePaths(
 	instanceDir: string,
