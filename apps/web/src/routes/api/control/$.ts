@@ -31,7 +31,8 @@ async function proxyToDaemon(request: Request) {
 	}
 
 	const contentLength = request.headers.get("content-length");
-	if (contentLength !== null && Number(contentLength) > MAX_BODY_BYTES) {
+	const cl = parseInt(contentLength ?? "", 10);
+	if (!Number.isNaN(cl) && cl > MAX_BODY_BYTES) {
 		return new Response(
 			JSON.stringify({ message: "Request body too large" }),
 			{
@@ -50,14 +51,17 @@ async function proxyToDaemon(request: Request) {
 			? undefined
 			: await request.text();
 
-	if (requestText !== undefined && requestText.length > MAX_BODY_BYTES) {
-		return new Response(
-			JSON.stringify({ message: "Request body too large" }),
-			{
-				status: 413,
-				headers: { "content-type": "application/json" },
-			},
-		);
+	if (requestText !== undefined) {
+		const bodyBytes = new TextEncoder().encode(requestText);
+		if (bodyBytes.length > MAX_BODY_BYTES) {
+			return new Response(
+				JSON.stringify({ message: "Request body too large" }),
+				{
+					status: 413,
+					headers: { "content-type": "application/json" },
+				},
+			);
+		}
 	}
 
 	const body = requestText && requestText.length > 0 ? requestText : undefined;
