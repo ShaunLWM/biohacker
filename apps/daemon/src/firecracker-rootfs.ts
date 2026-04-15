@@ -140,7 +140,12 @@ async function writeRootfsConfig(
 			"",
 		].join("\n"),
 	);
+	await ensureGuestSshHostKeys(mountDir);
 	await ensureGuestServicesEnabled(mountDir, REQUIRED_GUEST_SERVICES);
+}
+
+async function ensureGuestSshHostKeys(mountDir: string) {
+	await runCommand("chroot", [mountDir, "/usr/bin/ssh-keygen", "-A"]);
 }
 
 async function ensureGuestServicesEnabled(
