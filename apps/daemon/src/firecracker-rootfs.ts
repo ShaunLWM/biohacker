@@ -6,6 +6,11 @@ import { getDaemonLabTemplate } from "./lab-templates.js";
 import type { FirecrackerRuntime } from "./types.js";
 
 const DEFAULT_NAMESERVERS = ["1.1.1.1", "8.8.8.8"];
+const REQUIRED_GUEST_SERVICES = [
+	"systemd-networkd.service",
+	"systemd-resolved.service",
+	"ssh.service",
+];
 
 export async function cloneBaseImage(
 	baseImagePath: string,
@@ -135,6 +140,14 @@ async function writeRootfsConfig(
 			"",
 		].join("\n"),
 	);
+	await ensureGuestServicesEnabled(mountDir, REQUIRED_GUEST_SERVICES);
+}
+
+async function ensureGuestServicesEnabled(
+	mountDir: string,
+	services: readonly string[],
+) {
+	await runCommand("systemctl", [`--root=${mountDir}`, "enable", ...services]);
 }
 
 async function ensureGuestAccount(mountDir: string, username: string) {
