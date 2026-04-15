@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { closeSync, constants, openSync } from "node:fs";
 import { access, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { Socket } from "node:net";
-import { basename, join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { labTemplates, type VmTerminationReason } from "@biohacker/shared";
 import type { FastifyBaseLogger } from "fastify";
 import { z } from "zod";
@@ -165,6 +165,7 @@ export class FirecrackerRunner implements VmRunner {
 		let step = "create-instance-dir";
 
 		await ensureDir(instanceDir);
+		await runCommand("chmod", ["700", instanceDir]);
 		this.logger.info(
 			{
 				id: reservation.id,
@@ -343,7 +344,7 @@ export class FirecrackerRunner implements VmRunner {
 		try {
 			await runCommand("mount", [
 				"-o",
-				"loop",
+				"loop,nosuid,nodev",
 				runtime.writableRootfsPath,
 				mountDir,
 			]);
@@ -365,6 +366,12 @@ export class FirecrackerRunner implements VmRunner {
 			runtime.username,
 		);
 		const guestHome = join(mountDir, guestAccount.home.replace(/^\/+/, ""));
+		const resolvedHome = resolve(guestHome);
+		if (!resolvedHome.startsWith(resolve(mountDir) + "/")) {
+			throw new Error(
+				`Guest account home path escapes mount point: ${guestAccount.home}`,
+			);
+		}
 		const sshConfigDir = join(mountDir, "etc", "ssh", "sshd_config.d");
 
 		await ensureDir(guestHome);
@@ -865,7 +872,7 @@ export class FirecrackerRunner implements VmRunner {
 		await writeFile(
 			runtime.metadataPath,
 			JSON.stringify(runtime, null, 2),
-			"utf8",
+			{ encoding: "utf8", mode: 0o600 },
 		);
 	}
 
